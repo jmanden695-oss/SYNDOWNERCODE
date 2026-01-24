@@ -15,7 +15,7 @@ from astroquery.jplhorizons import Horizons
 # 1) Epoch
 # ============================================================
 
-epoch = Time("2025-12-01 00:00:00", scale="utc")
+epoch = Time("2026-01-14 21:00:00", scale="utc")
 
 
 # ============================================================
@@ -43,8 +43,8 @@ epoch_str = epoch.utc.strftime("%Y-%m-%d %H:%M UTC")
 # 3) Dust parameters
 # ============================================================
 
-betas = np.logspace(-5, -1, 20)
-ages  = np.linspace(0, 79, 20) * u.day
+betas = np.logspace(-5, -0.1, 20)
+ages  = np.linspace(0, 40, 30) * u.day
 
 # ============================================================
 # PA zero-point correction (degrees)
@@ -178,7 +178,23 @@ future_sc = SkyCoord(
 vel_pa_raw, vel_dx, vel_dy = pa_from_coord(future_sc)
 vel_pa = apply_pa_offset(vel_pa_raw)
 
+# ============================================================
+# 11) Plot (visual reference guide)
+# ============================================================
 
+def rotate_vector(dx, dy, angle_deg):
+    """
+    Rotate a vector in the tangent plane.
+    dx = East, dy = North
+    angle_deg > 0 rotates counterclockwise (toward East)
+    """
+    a = np.deg2rad(angle_deg)
+    xr = dx*np.cos(a) - dy*np.sin(a)
+    yr = dx*np.sin(a) + dy*np.cos(a)
+    return xr, yr
+
+fig, ax = plt.subplots(figsize=(8, 8))
+ax.set_aspect("equal")
 
 
 # ============================================================
@@ -208,9 +224,8 @@ def polyline_pa(states):
 
     return apply_pa_offset(pa_raw)
 
-def polyline_pa_and_length(syn, r_earth, offset_frame):
-    dx_list = []
-    dy_list = []
+def polyline_pa_and_length(syn, r_earth, offset_frame, pa_offset_deg=0.0):
+    dx, dy = [], []
 
     for s in syn:
         sc = SkyCoord(
@@ -222,27 +237,26 @@ def polyline_pa_and_length(syn, r_earth, offset_frame):
         )
 
         off = sc.transform_to(offset_frame)
+        dx.append(off.lon.arcsec)   # East
+        dy.append(off.lat.arcsec)   # North
 
-        dx_list.append(off.lon.to(u.arcsec).value)  # East
-        dy_list.append(off.lat.to(u.arcsec).value)  # North
+    dx = np.array(dx)
+    dy = np.array(dy)
 
-    dx = np.array(dx_list)
-    dy = np.array(dy_list)
-
-    # Distance from nucleus
+    # Furthest particle
     r = np.hypot(dx, dy)
-
-    # Use the furthest point
     i = np.argmax(r)
 
     dxm, dym = dx[i], dy[i]
 
+    # 🔁 APPLY SAME ROTATION AS PLOT
+    dxm, dym = rotate_vector(dxm, dym, pa_offset_deg)
+
     # PA: North=0°, East=90°
     pa = np.degrees(np.arctan2(dxm, dym)) % 360
-    length = r[i]  # arcsec
+    length = r[i]
 
     return pa, length
-
 print("\nSynchrones:")
 for i, syn in enumerate(synchrones):
     print(f"  Age {ages[i].value:5.1f} d : PA = {polyline_pa(syn):7.2f} deg")
@@ -258,11 +272,12 @@ for j, syn in enumerate(syndynes):
 
     print(
         f"  β={betas[j]:.2e} : "
-        f"PA = {pa:7.2f} deg, "
+        f"PA = {polyline_pa(syn):7.2f} deg, "
         f"length = {length:8.1f} arcsec"
     )
 
 mean_dyn_pa = mean_pa(dyn_pas)
+mean_dyn_pa_FIN = apply_pa_offset(mean_dyn_pa)
 spread_dyn_pa = pa_spread(dyn_pas)
 
 
@@ -271,27 +286,13 @@ print(f"Object: {comet_name}")
 print(f"Epoch: {epoch_str}")
 print(f"Sun PA (corrected): {sun_pa:.3f} deg")
 print(f"Velocity PA (corrected): {vel_pa:.3f} deg")
-print("\nSyndyne PA statistics:")
-print(f"  Mean PA   : {mean_dyn_pa:7.2f} deg")
-print(f"  PA spread : {spread_dyn_pa:6.2f} deg (circular σ)")
 
-# ============================================================
-# 11) Plot (visual reference guide)
-# ============================================================
 
-def rotate_vector(dx, dy, angle_deg):
-    """
-    Rotate a vector in the tangent plane.
-    dx = East, dy = North
-    angle_deg > 0 rotates counterclockwise (toward East)
-    """
-    a = np.deg2rad(angle_deg)
-    xr = dx*np.cos(a) - dy*np.sin(a)
-    yr = dx*np.sin(a) + dy*np.cos(a)
-    return xr, yr
+print("\nSyndyne PA statistics (offset-corrected):")
+print(f"  Mean PA   : {mean_dyn_pa_FIN:7.2f} deg")
+print(f"  PA spread : {spread_dyn_pa:6.2f} deg")
 
-fig, ax = plt.subplots(figsize=(8, 8))
-ax.set_aspect("equal")
+
 
 # -------------------------------------------------
 # Plot synchrones (rotated into corrected PA frame)
@@ -318,7 +319,7 @@ for syn in synchrones:
         xs.append(dxr)
         ys.append(dyr)
 
-    ax.plot(xs, ys, color="white", lw=0.5)
+    ax.plot(xs, ys, color="gray", lw=0.5)
 
 for syn in syndynes:
     xs, ys = [], []
@@ -414,6 +415,35 @@ ax.set_title(
     f"Syndynes & Synchrones — {comet_name}\nEpoch: {epoch_str}\nPA correction: {PA_OFFSET}",
     fontsize=12
 )
+
+beta_min = betas.min()
+beta_max = betas.max()
+
+age_min = ages.min().value
+age_max = ages.max().value
+
+dust_label = (
+    "Dust parameters\n"
+    f"β : {beta_min:.1e} → {beta_max:.1e} ({len(betas)})\n"
+    f"Age : {age_min:.0f} → {age_max:.0f} d ({len(ages)})"
+)
+
+
+ax.text(
+    0.02, 0.98,
+    dust_label,
+    transform=ax.transAxes,
+    fontsize=9,
+    va="top",
+    ha="left",
+    bbox=dict(
+        boxstyle="round,pad=0.3",
+        facecolor="white",
+        edgecolor="gray",
+        alpha=0.8
+    )
+)
+
 
 ax.set_xlabel("East (arcsec)")
 ax.set_ylabel("North (arcsec)")
